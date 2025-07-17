@@ -13,13 +13,23 @@ datasource db {
 }
 
 model User {
-  id            String   @id @default(uuid())
-  email         String   @unique
+  id            String         @id @default(uuid())
+  email         String         @unique
   password      String
   name          String?
-  verified      Boolean  @default(false)
-  oauthProvider String?  // google, github
-  oauthId       String?  // OAuth user ID
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  verified      Boolean        @default(false)
+  oauthProvider String? // google, github
+  oauthId       String? // OAuth user ID
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  refreshToken  RefreshToken[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  expiresAt DateTime
+  createdAt DateTime @default(now())
 }

@@ -2,7 +2,7 @@
 import app from './index.js';
 import dotenv from 'dotenv';
 import prisma from './db/db.js';
-
+import authRoutes from "./routes/UserRoutes.js"
 dotenv.config();
 
 const PORT = process.env.PORT || 5000;
@@ -17,6 +17,7 @@ async function startServer() {
     app.listen(PORT, () => {
       console.log(`🚀 Server running on http://localhost:${PORT}`);
     });
+    app.use("/api/auth", authRoutes)
   } catch (error) {
     console.error('❌ Failed to connect to database:', error);
     process.exit(1); // Exit if DB connection fails

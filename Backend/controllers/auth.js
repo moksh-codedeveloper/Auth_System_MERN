@@ -1,3 +1,4 @@
+import {generateRefreshToken} from "../utils/token.js"
 import prisma from "../db/db.js";
 import { credentialChecker } from "../utils/credentials_validators";
 import bcrypt from "bcrypt";
@@ -43,7 +44,7 @@ export const login = async (req, res) => {
     });
   } else {
     try {
-      let verifyPassword = await bcrypt.compare(prisma.user.password, password);
+      let verifyPassword = await bcrypt.compare(password, verifyEmail.password);
       let verifyEmail = await prisma.user.findUnique(email);
       if (!verifyEmail || !verifyPassword) {
         return res.status(400).json({
@@ -60,13 +61,24 @@ export const login = async (req, res) => {
         process.env.JWT_SECRET,
         { expiresIn: "1d" }
       );
+
+      const refreshToken = generateRefreshToken(verifyEmail)
+      const hashed_token = await bcrypt.hash(refreshToken, 10)
+      await prisma.user.update({
+        where: {id : user.id},
+        data: {
+          refreshToken: hashed_token
+        }
+      })
+      res.cookie("refreshtoken", refreshToken, {
+        httpOnly: true,
+      })
       res.cookie("token", token, {
         httpOnly: true,
         secure: process.env.NODE_ENV === "production",
         sameSite: "strict",
         maxAge: 7 * 24 * 60 * 60 * 1000,
       });
-
       return res
         .status(201)
         .json({
@@ -85,15 +97,73 @@ export const login = async (req, res) => {
   }
 };
 
+export const refreshToken = async (req, res) => {
+  const refreshToken = req.cookie.refreshtoken;
+  if(!refreshToken){
+    return res.status(404).json({message: "NO refresh token found man how much unlucky are you"})
+  }
+
+  try {
+    const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN)
+    const user = await prisma.user.findUnique({
+      where: {
+        id: decoded.id
+      }
+    })
+    if(!user || !user.refreshToken){
+      return res.status(403).json({message: "UNAUTHORIZED"})
+    }
+    const match = await bcrypt.compare(refreshToken, user.refreshToken)
+    if(!match){
+      return res.status(403).json({message: "No valid token found"})
+    }
+    const generateNewToken = jwt.sign({email: user.id, id: user.id}, process.env.JWT_SECRET, {expiresIn: '1d'})
+    const generateNewRefreshToken = generateRefreshToken(user)
+    const hashedRefreshToken = await bcrypt.hash(generateNewRefreshToken, 10)
+    await prisma.user.update({
+      where: {
+        id : user.id,
+      },
+      data: {
+        refreshToken: hashedRefreshToken
+      }
+    })
+    res.cookie("refreshToken", generateNewRefreshToken, {
+      httpOnly: true
+    })
+    res.cookie("token", generateNewToken, {
+      httpOnly: true
+    })
+    return res.status(201).json({
+      accessToken: generateNewToken,
+      message: "you have this new token now use it with pride"
+    })
+  } catch (error) {
+    return res.status(500).json({message: "Stop using the internet of the old stone age time please bro you will make your life more worse by doing this"})
+  }
+}
+
 export const logout = async (req, res) => {
   try {
-    if(!req.cookies.token){
+    if(!req.cookie.token || !req.cookie.refreshtoken){
       console.log("you are not authorized to logout just get the hell outta here");
     }
     res.cookie("token", "", {
       httpOnly: true,
       expires: Date(0),
     });
+    await prisma.user.update({
+      where: {
+        id: user.id,
+      },
+      data: {
+        refreshToken: null
+      }
+    })
+    res.cookie("refreshtoken", "", {
+      httpOnly: true,
+      expires: Date(0)
+    })
 
     return res
       .status(200)
