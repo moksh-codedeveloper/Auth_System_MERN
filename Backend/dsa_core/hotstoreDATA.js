@@ -49,27 +49,6 @@ class HotDataStore {
     return this.lruCache.get(token) ? true : false;
   }
 
-  async flushToDB() {
-    const users = Array.from(this.dataMap.values());
-    if (users.length === 0) return;
-
-    try {
-      await prisma.user.createMany({
-        data: users.map(u => ({
-          name: u.name,
-          email: u.email,
-          password: u.passwordHash,
-        })),
-        skipDuplicates: true
-      });
-      this.dataMap.clear();
-      this.ttlQueue = [];
-    } catch (error) {
-      console.error("DB flush failed:", error);
-      setTimeout(() => this.flushToDB(), 2000);
-    }
-  }
-
   cleanExpired() {
     const now = Date.now();
     this.ttlQueue = this.ttlQueue.filter(entry => {

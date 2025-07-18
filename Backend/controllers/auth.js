@@ -9,20 +9,35 @@ import { credentialChecker } from "../utils/credentials_validators.js";
 
 export const register = async (req, res) => {
   const { name, email, password } = req.body;
-  const checker = credentialChecker(email, name, password);
+  const checker = credentialChecker(name, email, password);
   if (!checker.isValid) return res.status(400).json({ error: checker.error });
 
   try {
     const hashedPassword = await bcrypt.hash(password, 12);
     const added = hotStore.addUser(name, email, hashedPassword);
-    if (!added) return res.status(409).json({ message: "User already exists" });
-
+    const user = await prisma.user.findUnique({
+      where: {
+        email
+      }
+    })
+    if(!user) {
+      await prisma.user.createMany({
+        data: {
+          name: name,
+          email: email,
+          password: password
+        }
+      })
+    }
+    if (added) return res.status(409).json({ message: "User already exists" });
+    console.log("user passed from here");
+    console.log("User details which passed to the db is here", hotStore);
     return res.status(201).json({ message: "User queued for DB insert" });
-  } catch {
+  } catch (err) {
+    console.error(err);
     return res.status(500).json({ message: "Registration failed" });
   }
 };
-
 export const login = async (req, res) => {
   let { email, password } = req.body;
   email = validator.normalizeEmail(email);
@@ -30,26 +45,33 @@ export const login = async (req, res) => {
     return res.status(400).json({ message: "Invalid email" });
 
   try {
-    const user = await prisma.user.findUnique({ where: { email } });
+    let user = await prisma.user.findUnique({ where: { email } });
+    let isTempUser = false;
+
+    // If user not in DB, check HotStore
+    if(!user) {
+      console.log("The user doesn't exist here");
+      return res.status(404).json({message: "no user found"})
+    }
+
     if (!user) return res.status(404).json({ message: "User not found" });
-
-    const validPassword = await bcrypt.compare(password, user.password);
-    if (!validPassword)
-      return res.status(401).json({ message: "Wrong credentials" });
-
     const token = jwt.sign(
-      { id: user.id, name: user.name, email: user.email },
+      { id: user.id || "temp", name: user.name, email: user.email },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
-    const refreshToken = generateRefreshToken(user);
-    const hashedRefresh = await bcrypt.hash(refreshToken, 10);
 
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { refreshToken: hashedRefresh },
-    });
-    hotStore.cacheToken(token, user.id);
+    const refreshToken = generateRefreshToken(user);
+    hotStore.cacheToken(token, user.id || user.email); // Use email as key if no ID yet
+
+    // Only persist refresh token if user exists in DB
+    if (!isTempUser) {
+      const hashedRefresh = await bcrypt.hash(refreshToken, 10);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { refreshToken: hashedRefresh },
+      });
+    }
 
     res.cookie("refreshtoken", refreshToken, { httpOnly: true });
     res.cookie("token", token, {
@@ -58,9 +80,16 @@ export const login = async (req, res) => {
       secure: process.env.NODE_ENV === "production",
     });
 
-    return res.status(200).json({ data: token, message: "Login successful" });
-  } catch {
-    return res.status(500).json({ message: "Login failed" });
+    return res.status(200).json({
+      token,
+      isTempUser,
+      message: isTempUser
+        ? "Login successful (temporary session)"
+        : "Login successful",
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ message: "Login failed", error: err.message });
   }
 };
 
@@ -113,12 +142,10 @@ export const refreshToken = async (req, res) => {
       message: "you have this new token now use it with pride",
     });
   } catch (error) {
-    return res
-      .status(500)
-      .json({
-        message:
-          "Stop using the internet of the old stone age time please bro you will make your life more worse by doing this",
-      });
+    return res.status(500).json({
+      message:
+        "Stop using the internet of the old stone age time please bro you will make your life more worse by doing this",
+    });
   }
 };
 
