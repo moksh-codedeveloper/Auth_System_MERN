@@ -1,30 +1,31 @@
 import validator from "validator";
 
-export const credentialChecker = (email, name, password) => {
+export const credentialChecker = (name, email, password) => {
   const error = {};
-  name = validator.trim(name);
-  email = validator.normalizeEmail(email);
-  name = validator.escape(name);
+
   if (!name || !email || !password) {
-    error.msg = "please enter the credentials don't keep them empty";
+    error.msg = "Please enter all credentials";
   }
 
-  if (!validator.isAlpha(name, "en-IN", { ignore: " " })) {
-    error.name = "you are entering the wrong name";
+  if (!validator.isAlpha(name, "en-US", { ignore: " " })) {
+    error.name = "Name must only contain letters";
   }
+
   if (!validator.isEmail(email)) {
-    error.email = "you have given invalid email please provide real one";
+    error.email = "Invalid email format";
   }
+
   const strongPassword = validator.isStrongPassword(password, {
     minLength: 10,
     minLowercase: 2,
-    minUppercase: 2,
+    minUppercase: 1, // ✅ Changed from 2 to 1
     minNumbers: 1,
     minSymbols: 1,
   });
 
   if (!strongPassword) {
-    error.password = "you have entered invalid password";
+    error.password =
+      "Password must have 10+ chars, 1 uppercase, 2 lowercase, 1 number, 1 special char";
   }
 
   return {

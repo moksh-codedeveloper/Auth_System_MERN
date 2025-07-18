@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import cookieParser from "cookie-parser";
 
 const app = express();
 
@@ -11,7 +12,7 @@ app.use(cors());
 
 // JSON Parsing
 app.use(express.json());
-
+app.use(cookieParser());
 // Rate Limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 min

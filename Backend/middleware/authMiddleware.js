@@ -1,17 +1,20 @@
+// middleware/verifyToken.js
 import jwt from "jsonwebtoken";
+import { hotStore } from "../dsa_core/hotStoreInstances.js";
 
 export const verifyToken = (req, res, next) => {
   const token = req.cookies?.token;
+  if (!token) return res.status(401).json({ message: "No token provided" });
 
-  if (!token) {
-    return res.status(401).json({ message: "Not authorized, no token found" });
+  if (!hotStore.isTokenValid(token)) {
+    return res.status(403).json({ message: "Token expired or invalid" });
   }
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // Attach user data to req for later use
+    req.user = decoded;
     next();
   } catch (error) {
-    return res.status(403).json({ message: "Invalid or expired token" });
+    return res.status(403).json({ message: "Invalid JWT" });
   }
 };
