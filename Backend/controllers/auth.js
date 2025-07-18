@@ -1,202 +1,130 @@
-// controllers/authController.js
 import prisma from "../db/db.js";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import validator from "validator";
-import { hotStore } from "../dsa_core/hotStoreInstances.js";
-import { generateRefreshToken } from "../utils/token.js";
-import { credentialChecker } from "../utils/credentials_validators.js";
+import { generateAccessToken, generateRefreshToken } from "../utils/token.js";
+import { userDsa } from "../utils/dsa_user.js";
 
+// REGISTER
 export const register = async (req, res) => {
-  const { name, email, password } = req.body;
-  const checker = credentialChecker(name, email, password);
-  if (!checker.isValid) return res.status(400).json({ error: checker.error });
+  const { email, name, password } = req.body;
+
+  if (!validator.isEmail(email)) {
+    return res.status(400).json({ message: "Invalid email format" });
+  }
+
+  if (!validator.isStrongPassword(password)) {
+    return res.status(400).json({ message: "Password is too weak" });
+  }
 
   try {
     const hashedPassword = await bcrypt.hash(password, 12);
-    const added = hotStore.addUser(name, email, hashedPassword);
-    const user = await prisma.user.findUnique({
-      where: {
-        email
-      }
-    })
-    if(!user) {
-      await prisma.user.createMany({
-        data: {
-          name: name,
-          email: email,
-          password: password
-        }
-      })
-    }
-    if (added) return res.status(409).json({ message: "User already exists" });
-    console.log("user passed from here");
-    console.log("User details which passed to the db is here", hotStore);
-    return res.status(201).json({ message: "User queued for DB insert" });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: "Registration failed" });
-  }
-};
-export const login = async (req, res) => {
-  let { email, password } = req.body;
-  email = validator.normalizeEmail(email);
-  if (!validator.isEmail(email))
-    return res.status(400).json({ message: "Invalid email" });
 
-  try {
-    let user = await prisma.user.findUnique({ where: { email } });
-    let isTempUser = false;
+    userDsa.addUser(email, { name, password: hashedPassword });
 
-    // If user not in DB, check HotStore
-    if(!user) {
-      console.log("The user doesn't exist here");
-      return res.status(404).json({message: "no user found"})
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (!existingUser) {
+      await prisma.user.create({ data: { email, name, password: hashedPassword } });
     }
 
-    if (!user) return res.status(404).json({ message: "User not found" });
-    const token = jwt.sign(
-      { id: user.id || "temp", name: user.name, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: "1d" }
-    );
-
-    const refreshToken = generateRefreshToken(user);
-    hotStore.cacheToken(token, user.id || user.email); // Use email as key if no ID yet
-
-    // Only persist refresh token if user exists in DB
-    if (!isTempUser) {
-      const hashedRefresh = await bcrypt.hash(refreshToken, 10);
-      await prisma.user.update({
-        where: { id: user.id },
-        data: { refreshToken: hashedRefresh },
-      });
-    }
-
-    res.cookie("refreshtoken", refreshToken, { httpOnly: true });
-    res.cookie("token", token, {
-      httpOnly: true,
-      sameSite: "Strict",
-      secure: process.env.NODE_ENV === "production",
-    });
-
-    return res.status(200).json({
-      token,
-      isTempUser,
-      message: isTempUser
-        ? "Login successful (temporary session)"
-        : "Login successful",
-    });
-  } catch (err) {
-    console.error(err);
-    return res.status(500).json({ message: "Login failed", error: err.message });
-  }
-};
-
-export const refreshToken = async (req, res) => {
-  const refreshToken = req.cookies.refreshtoken;
-  if (!refreshToken) {
-    return res
-      .status(404)
-      .json({ message: "NO refresh token found man how much unlucky are you" });
-  }
-
-  try {
-    const decoded = jwt.verify(refreshToken, process.env.REFRESH_TOKEN);
-    const user = await prisma.user.findUnique({
-      where: {
-        id: decoded.id,
-      },
-    });
-    if (!user || !user.refreshToken) {
-      return res.status(403).json({ message: "UNAUTHORIZED" });
-    }
-    const match = await bcrypt.compare(refreshToken, user.refreshToken);
-    if (!match) {
-      return res.status(403).json({ message: "No valid token found" });
-    }
-    const generateNewToken = jwt.sign(
-      { email: user.id, id: user.id },
-      process.env.JWT_SECRET,
-      { expiresIn: "1d" }
-    );
-    const generateNewRefreshToken = generateRefreshToken(user);
-    hotStore.cacheToken(generateNewToken, user.id);
-    const hashedRefreshToken = await bcrypt.hash(generateNewRefreshToken, 10);
-    await prisma.user.update({
-      where: {
-        id: user.id,
-      },
-      data: {
-        refreshToken: hashedRefreshToken,
-      },
-    });
-    res.cookies("refreshToken", generateNewRefreshToken, {
-      httpOnly: true,
-    });
-    res.cookies("token", generateNewToken, {
-      httpOnly: true,
-    });
-    return res.status(201).json({
-      accessToken: generateNewToken,
-      message: "you have this new token now use it with pride",
-    });
+    return res.status(201).json({ message: "Registered successfully" });
   } catch (error) {
-    return res.status(500).json({
-      message:
-        "Stop using the internet of the old stone age time please bro you will make your life more worse by doing this",
-    });
+    return res.status(500).json({ message: "Server error" });
   }
 };
 
-export const logout = async (req, res) => {
+// LOGIN
+export const login = async (req, res) => {
+  const { email, password } = req.body;
+
   try {
-    if (!req.cookies.token || !req.cookies.refreshtoken) {
-      console.log(
-        "you are not authorized to logout just get the hell outta here"
-      );
-    }
-    res.cookies("token", "", {
-      httpOnly: true,
-      expires: Date(0),
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const isValid = await bcrypt.compare(password, user.password);
+    if (!isValid) return res.status(401).json({ message: "Invalid credentials" });
+
+    const accessToken = generateAccessToken({ id: user.id, email: user.email });
+    const refreshToken = generateRefreshToken();
+
+    await prisma.refreshToken.create({
+      data: {
+        token: refreshToken,
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      },
     });
-    const userId = req.user?.id; // Make sure verifyToken middleware runs before logout
+
+    userDsa.addToken(refreshToken, { userId: user.id }, 7 * 24 * 60 * 60 * 1000);
+
+    res.cookie("accessToken", accessToken, { httpOnly: true, sameSite: "Strict" });
+    res.cookie("refreshToken", refreshToken, { httpOnly: true, sameSite: "Strict" });
+
+    return res.status(200).json({ message: "Logged in", accessToken });
+  } catch (error) {
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
+// REFRESH TOKEN
+export const refreshTokenHandler = async (req, res) => {
+  const oldToken = req.cookies?.refreshToken;
+  if (!oldToken) return res.status(401).json({ message: "No refresh token" });
+
+  const session = userDsa.getToken(oldToken);
+  let userId;
+
+  if (session) {
+    userId = session.userId;
+  } else {
+    const dbToken = await prisma.refreshToken.findUnique({ where: { token: oldToken } });
+    if (!dbToken || dbToken.expiresAt < new Date()) {
+      return res.status(403).json({ message: "Invalid or expired token" });
+    }
+    userId = dbToken.userId;
+  }
+
+  const newAccessToken = generateAccessToken({ id: userId });
+  const newRefreshToken = generateRefreshToken();
+
+  await prisma.refreshToken.update({
+    where: { token: oldToken },
+    data: { token: newRefreshToken, expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) },
+  });
+
+  userDsa.removeToken(oldToken);
+  userDsa.addToken(newRefreshToken, { userId }, 7 * 24 * 60 * 60 * 1000);
+
+  res.cookie("accessToken", newAccessToken, { httpOnly: true });
+  res.cookie("refreshToken", newRefreshToken, { httpOnly: true });
+
+  return res.status(200).json({ message: "Token refreshed", accessToken: newAccessToken });
+};
+
+// LOGOUT
+export const logout = async (req, res) => {
+  const refreshToken = req.cookies?.refreshToken;
+  if (refreshToken) {
+    await prisma.refreshToken.deleteMany({ where: { token: refreshToken } });
+    userDsa.removeToken(refreshToken);
+  }
+
+  res.clearCookie("accessToken");
+  res.clearCookie("refreshToken");
+
+  return res.status(200).json({ message: "Logged out successfully" });
+};
+
+export const getProfile = async (req, res) => {
+    const userId = req.user?.id;
     if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
-    await prisma.user.update({
-      where: { id: userId },
-      data: { refreshToken: null },
-    });
-    res.cookies("refreshtoken", "", {
-      httpOnly: true,
-      expires: Date(0),
-    });
-    hotStore.removeToken(req.cookies.token);
-    hotStore.removeToken(req.cookies.refreshtoken);
-    return res
-      .status(200)
-      .json({ message: "logout successfully touch some grass" });
-  } catch (error) {
-    return res
-      .status(500)
-      .json({ message: "the server is sleeping come tomorrow" });
-  }
-};
-export const getProfile = async (req, res) => {
-  try {
-    // req.user comes from verifyToken middleware
-    const userId = req.user.id;
+    let user = [...userDsa.users.values()].find(u => u.id === userId);
+    if (!user) {
+        user = await prisma.user.findUnique({ where: { id: userId } });
+        if (!user) return res.status(404).json({ message: "User not found" });
+        userDsa.addUser(user.email, user);
+    }
 
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { name: true, email: true }, // Do NOT return password
-    });
-
-    return res.status(200).json({
-      message: "Profile fetched successfully",
-      data: user,
-    });
-  } catch (error) {
-    return res.status(500).json({ message: "Server error fetching profile" });
-  }
+    return res.status(200).json({ user: { id: user.id, email: user.email, name: user.name } });
 };
