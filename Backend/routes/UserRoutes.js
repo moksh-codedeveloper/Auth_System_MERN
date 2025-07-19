@@ -10,7 +10,7 @@ router.post("/register", register);
 router.post("/login", login);
 
 // Protected routes
-router.post("/logout", verifyToken, logout);
+router.get("/logout", logout);
 router.get("/profile", verifyToken, getProfile);
 router.post("/refreshToken", refreshTokenHandler)
 export default router;
