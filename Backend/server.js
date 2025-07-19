@@ -1,14 +1,18 @@
-// server.js
 import app from './index.js';
 import dotenv from 'dotenv';
 import prisma from './db/db.js';
-import authRoutes from "./routes/UserRoutes.js"
+
 dotenv.config();
 
 const PORT = process.env.PORT || 5000;
 
 async function startServer() {
   try {
+    // Validate required env variables
+    if (!process.env.JWT_SECRET || !process.env.REFRESH_TOKEN || !process.env.DATABASE_URL) {
+      throw new Error("Missing required environment variables");
+    }
+
     // Test DB Connection
     await prisma.$connect();
     console.log('✅ Database connected successfully');
@@ -17,10 +21,17 @@ async function startServer() {
     app.listen(PORT, () => {
       console.log(`🚀 Server running on http://localhost:${PORT}`);
     });
-    app.use("/api/auth", authRoutes)
+
+    // Graceful Shutdown
+    process.on('SIGINT', async () => {
+      await prisma.$disconnect();
+      console.log('🔌 Database disconnected');
+      process.exit(0);
+    });
+
   } catch (error) {
-    console.error('❌ Failed to connect to database:', error);
-    process.exit(1); // Exit if DB connection fails
+    console.error('❌ Failed to start server:', error.message);
+    process.exit(1);
   }
 }
 
