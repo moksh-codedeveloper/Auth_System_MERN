@@ -82,12 +82,13 @@ export const login = async (req, res) => {
 
 export const refreshTokenHandler = async (req, res) => {
   try {
+    console.log("Refresh token request received");
     const oldToken = req.cookies?.refreshToken;
     if (!oldToken) return res.status(401).json({ message: "No refresh token" });
 
     const session = userDsa.getToken(oldToken);
     let userId;
-
+    console.log("Processing refresh token for user:", userId);
     if (session) {
       userId = session.userId;
     } else {
@@ -110,20 +111,30 @@ export const refreshTokenHandler = async (req, res) => {
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       },
     });
-
+    console.log("Refresh successful, new tokens generated");
     userDsa.removeToken(oldToken);
     userDsa.addToken(newRefreshToken, { userId }, 7 * 24 * 60 * 60 * 1000);
     const cookieOptions = {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production", // send over HTTPS in prod
-      sameSite: "Strict", // prevents CSRF
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+      path: "/",
     };
-    res.cookie("token", newAccessToken, cookieOptions);
-    res.cookie("refreshToken", newRefreshToken, cookieOptions);
-
-    return res
-      .status(200)
-      .json({ message: "Token refreshed", accessToken: newAccessToken });
+    const accessCookieOptions = {
+      ...cookieOptions,
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    };
+    const refreshCookieOptions = {
+      ...cookieOptions,
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    };
+    res.cookie("token", newAccessToken, accessCookieOptions);
+    res.cookie("refreshToken", newRefreshToken, refreshCookieOptions);
+    return res.status(200).json({
+      message: "Token refreshed",
+      accessToken: newAccessToken,
+      refreshToken: newRefreshToken, // ADD THIS LINE
+    });
   } catch (error) {
     return res.status(500).json({ message: "Server error" });
   }
@@ -136,37 +147,37 @@ export const logout = async (req, res) => {
     await prisma.refreshToken.deleteMany({ where: { token: refreshToken } });
     userDsa.removeToken(refreshToken);
   }
-
-  res.cookie("token", "", {
+  // Clear cookies
+  const clearCookieOptions = {
     httpOnly: true,
-    sameSite: "Strict",
-  });
-  res.cookie("refreshToken", "", {
-    httpOnly: true,
-    sameSite: "Strict",
-  });
+    secure: process.env.NODE_ENV === "production",
+    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+    path: "/",
+  };
+  res.cookie("token", "", clearCookieOptions);
+  res.cookie("refreshToken", "", clearCookieOptions);
   return res.status(200).json({ message: "Logged out successfully" });
 };
 
+// GET PROFILE
 export const getProfile = async (req, res) => {
   try {
     const userId = req.user?.id;
     if (!userId) return res.status(401).json({ message: "Unauthorized" });
-  
+
     let user = [...userDsa.users.values()].find((u) => u.id === userId);
     if (!user) {
       user = await prisma.user.findUnique({ where: { id: userId } });
       if (!user) return res.status(404).json({ message: "User not found" });
       userDsa.addUser(user.email, user);
     }
-  
-    return res
-      .status(200)
-      .json({
-        message: "Profile retrieved successfully",
-        user: { id: user.id, email: user.email, name: user.name }
-      });
+
+    return res.status(200).json({
+      message: "Profile retrieved successfully",
+      user: { id: user.id, email: user.email, name: user.name },
+    });
   } catch (error) {
+    console.error("Profile error:", error);
     return res.status(500).json({ message: "Server error" });
   }
 };

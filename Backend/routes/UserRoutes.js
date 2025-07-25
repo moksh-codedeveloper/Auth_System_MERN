@@ -8,9 +8,9 @@ const router = express.Router();
 // Public routes
 router.post("/register", register);
 router.post("/login", login);
+router.post("/refreshToken", refreshTokenHandler)
 
 // Protected routes
-router.get("/logout", logout);
+router.post("/logout", verifyToken, logout);
 router.get("/profile", verifyToken, getProfile);
-router.post("/refreshToken", refreshTokenHandler)
 export default router;
