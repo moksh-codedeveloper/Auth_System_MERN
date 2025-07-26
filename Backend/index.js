@@ -21,7 +21,7 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
+      scriptSrc: ["'self'"], // Removed 'unsafe-inline' - reconsider if truly needed
       objectSrc: ["'none'"],
       upgradeInsecureRequests: [],
     },
@@ -39,36 +39,11 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-CSRF-Token'],
 }));
 
-// ✅ Body parser & cookies
+// ✅ Body parser & cookies (Order is correct here)
 app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 
-// ✅ CSRF Protection - Modified for middleware compatibility
-const csrfProtection = csrf({
-  cookie: {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
-  },
-  // Skip CSRF for refresh token endpoint since it's called by middleware
-  ignoreMethods: ['GET', 'HEAD', 'OPTIONS'],
-});
-
-// Apply CSRF protection selectively
-app.use((req, res, next) => {
-  // Skip CSRF for refresh token endpoint
-  if (req.path === '/api/auth/refreshToken') {
-    return next();
-  }
-  return csrfProtection(req, res, next);
-});
-
-// ✅ CSRF Token Route (frontend will call this to get a token)
-app.get("/api/csrf-token", (req, res) => {
-  res.json({ csrfToken: req.csrfToken() });
-});
-
-// ✅ Rate Limiting (global)
+// ✅ Rate Limiting (global) - MOVED UP for broader application
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100, // limit IP to 100 requests per 15 mins
@@ -77,46 +52,68 @@ const globalLimiter = rateLimit({
 });
 app.use(globalLimiter);
 
-// ✅ Route-specific rate limiter for login
-const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 5, // only 5 login attempts per 15 mins
-  message: { message: "Too many login attempts, try again later." },
-});
-app.use("/api/auth/login", loginLimiter);
+// index.js - Fixed CSRF configuration
 
-// ✅ Rate limiter for refresh token
-const refreshLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000, // 5 minutes
-  max: 20, // 20 refresh attempts per 5 mins
-  message: { message: "Too many refresh attempts, try again later." },
+// ✅ CSRF Protection setup
+const csrfProtection = csrf({
+  cookie: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+  },
 });
+
+// ✅ CSRF Token Route (NO CSRF protection on this route)
+app.get("/api/csrf-token", csrfProtection, (req, res) => {
+  res.json({ csrfToken: req.csrfToken() });
+});
+
+// ✅ Routes WITHOUT CSRF protection (for inter-service communication)
+app.use("/api/auth", authRoutes); // JWT validation routes don't need CSRF
+
+// ✅ Apply CSRF protection ONLY to specific routes that need it
+// Only apply CSRF to routes that modify data and are called directly from frontend
+app.use("/api/files", csrfProtection); // If you have file routes that need CSRF
+app.use("/api/user-actions", csrfProtection); // Any user action routes
+
+// Alternative approach - exclude specific routes:
+/*
+app.use((req, res, next) => {
+  // Skip CSRF for these routes (inter-service communication)
+  const skipCSRF = [
+    '/api/auth/refreshToken',
+    '/api/auth/login',
+    '/api/auth/profile',
+    '/api/auth/logout'
+  ];
+  
+  if (skipCSRF.includes(req.path)) {
+    return next();
+  }
+  
+  // Apply CSRF protection to all other routes
+  return csrfProtection(req, res, next);
+});
+*/
+
+// ✅ Rate limiters (after CSRF setup)
+app.use("/api/auth/login", loginLimiter);
 app.use("/api/auth/refreshToken", refreshLimiter);
 
-// ✅ Routes
-app.use("/api/auth", authRoutes);
-
-// ✅ Health Check Route
-app.get('/', (req, res) => {
-  res.json({ message: 'Auth API is running ✅' });
-});
-
-// ✅ Centralized Error Handler
+// ✅ Centralized Error Handler (same as before)
 app.use((err, req, res, next) => {
   console.error("🔥 Error:", err.stack);
-  
-  // Handle CSRF errors
+
   if (err.code === 'EBADCSRFTOKEN') {
     return res.status(403).json({
       success: false,
       message: "Invalid CSRF token",
     });
   }
-  
+
   res.status(err.status || 500).json({
     success: false,
     message: err.message || "Something broke!",
   });
 });
-
 export default app;
