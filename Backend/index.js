@@ -73,11 +73,11 @@ app.use("/api/auth", authRoutes); // JWT validation routes don't need CSRF
 
 // ✅ Apply CSRF protection ONLY to specific routes that need it
 // Only apply CSRF to routes that modify data and are called directly from frontend
-app.use("/api/files", csrfProtection); // If you have file routes that need CSRF
-app.use("/api/user-actions", csrfProtection); // Any user action routes
+// app.use("/api/files", csrfProtection); // If you have file routes that need CSRF
+// app.use("/api/user-actions", csrfProtection); // Any user action routes
 
 // Alternative approach - exclude specific routes:
-/*
+
 app.use((req, res, next) => {
   // Skip CSRF for these routes (inter-service communication)
   const skipCSRF = [
@@ -94,11 +94,10 @@ app.use((req, res, next) => {
   // Apply CSRF protection to all other routes
   return csrfProtection(req, res, next);
 });
-*/
 
 // ✅ Rate limiters (after CSRF setup)
-app.use("/api/auth/login", loginLimiter);
-app.use("/api/auth/refreshToken", refreshLimiter);
+// app.use("/api/auth/login", loginLimiter);
+// app.use("/api/auth/refreshToken", refreshLimiter);
 
 // ✅ Centralized Error Handler (same as before)
 app.use((err, req, res, next) => {

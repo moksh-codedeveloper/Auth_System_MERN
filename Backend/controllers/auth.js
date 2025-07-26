@@ -57,6 +57,20 @@ export const login = async (req, res) => {
         expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       },
     });
+    const cookieOptions = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+      path: "/",
+    };
+    const accessCookieOptions = {
+      ...cookieOptions,
+      maxAge: 15 * 60 * 1000, // 15 minutes
+    };
+    const refreshCookieOptions = {
+      ...cookieOptions,
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    };
     if (!addingRefreshToken) {
       return res.status(400).json({
         message: "Your data is not being stored buddy",
@@ -65,15 +79,11 @@ export const login = async (req, res) => {
     userDsa.addToken(
       refreshToken,
       { userId: user.id },
-      15 * 24 * 60 * 60 * 1000
+      7 * 24 * 60 * 60 * 1000
     );
 
-    res.cookie("token", accessToken, { httpOnly: true, sameSite: "Strict" });
-    res.cookie("refreshToken", refreshToken, {
-      httpOnly: true,
-      sameSite: "Strict",
-    });
-
+    res.cookie("token", accessToken, accessCookieOptions);
+    res.cookie("refreshToken", refreshToken, refreshCookieOptions);
     return res.status(200).json({ message: "Logged in", accessToken });
   } catch (error) {
     return res.status(500).json({ message: "Server error" });
